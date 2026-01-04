@@ -21,6 +21,10 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '请在这里填入你的To
 # 你的 Chat ID（从 @userinfobot 获取）
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '6826881653')
 
+# 企业微信机器人 Webhook URL（可选，如果不需要可以留空）
+# 获取方式：在企业微信群中添加机器人，获取 Webhook URL
+WECHAT_WEBHOOK_URL = os.getenv('WECHAT_WEBHOOK_URL', '')
+
 # 检查间隔（分钟）- 可以设置为 30 或 60
 CHECK_INTERVAL_MINUTES = 60
 
@@ -312,11 +316,139 @@ def send_telegram_message(message: str) -> bool:
         return False
 
 
+def send_wechat_message(message: str) -> bool:
+    """
+    通过企业微信机器人发送消息
+    
+    Args:
+        message: 要发送的消息内容（Markdown格式）
+    
+    Returns:
+        发送成功返回 True，失败返回 False
+    """
+    if not WECHAT_WEBHOOK_URL or WECHAT_WEBHOOK_URL == '':
+        return False
+    
+    try:
+        data = {
+            'msgtype': 'markdown',
+            'markdown': {
+                'content': message
+            }
+        }
+        
+        response = requests.post(WECHAT_WEBHOOK_URL, json=data, timeout=10)
+        response.raise_for_status()
+        
+        result = response.json()
+        if result.get('errcode') == 0:
+            return True
+        else:
+            print(f"企业微信返回错误: {result.get('errmsg', '未知错误')}")
+            return False
+    except Exception as e:
+        print(f"发送企业微信消息失败: {e}")
+        return False
+
+
 def get_beijing_time() -> str:
     """获取北京时间（UTC+8）"""
     beijing_tz = timezone(timedelta(hours=8))
     beijing_time = datetime.now(beijing_tz)
     return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
+                                      historical_range: Optional[Dict] = None) -> str:
+    """
+    格式化温度提醒消息（企业微信 Markdown 格式）
+    
+    Args:
+        airport: 机场名称
+        max_temp: 最高温度（摄氏度）
+        last_year_temp: 去年同一天的最高温度
+        historical_range: 历史温度范围数据
+    
+    Returns:
+        格式化后的消息（Markdown格式）
+    """
+    # 获取机场代码和中文名称
+    airport_info = AIRPORTS.get(airport, {})
+    airport_code = airport_info.get('code', '')
+    airport_name_cn = airport_info.get('name_cn', '')
+    
+    # 格式化机场显示：代码 中文名称 代码（例如：LCY 伦敦 LCY）
+    if airport_code and airport_name_cn:
+        airport_display = f"{airport_code} {airport_name_cn} {airport_code}"
+    else:
+        airport_display = airport
+    
+    max_temp_f = celsius_to_fahrenheit(max_temp)
+    
+    # 计算三个参考值
+    ref_minus = max_temp - 1
+    ref_center = max_temp
+    ref_plus = max_temp + 1
+    
+    ref_minus_f = celsius_to_fahrenheit(ref_minus)
+    ref_center_f = celsius_to_fahrenheit(ref_center)
+    ref_plus_f = celsius_to_fahrenheit(ref_plus)
+    
+    # 获取北京时间
+    beijing_time = get_beijing_time()
+    
+    # 获取当前日期（用于显示去年日期）
+    today = datetime.now()
+    last_year_date = today.replace(year=today.year - 1)
+    last_year_str = last_year_date.strftime('%Y年%m月%d日')
+    
+    message = f"""# 🌡️ 机场天气最高温预测提醒
+
+**📍 机场:** {airport_display}  
+**🕐 更新时间（北京时间）:** {beijing_time}
+
+## 📊 当天预测最高温度
+**{max_temp:.1f}°C / {max_temp_f:.1f}°F**
+
+## 📈 三个参考值
+• {ref_minus:.1f}°C / {ref_minus_f:.1f}°F (最高温 -1°C)  
+• {ref_center:.1f}°C / {ref_center_f:.1f}°F (最高温)  
+• {ref_plus:.1f}°C / {ref_plus_f:.1f}°F (最高温 +1°C)"""
+    
+    # 添加去年同一天的温度对比
+    if last_year_temp is not None:
+        last_year_temp_f = celsius_to_fahrenheit(last_year_temp)
+        diff = max_temp - last_year_temp
+        diff_f = celsius_to_fahrenheit(abs(diff))
+        diff_symbol = "↑" if diff > 0 else "↓" if diff < 0 else "="
+        
+        message += f"""
+
+## 📅 历史对比
+• **{last_year_str}:** {last_year_temp:.1f}°C / {last_year_temp_f:.1f}°F  
+• **今年对比去年:** {diff_symbol} {abs(diff):.1f}°C / {diff_f:.1f}°F"""
+    
+    # 添加历史温度区间
+    if historical_range:
+        min_temp = historical_range['min_temp']
+        max_temp_hist = historical_range['max_temp']
+        avg_temp = historical_range['avg_temp']
+        years_count = historical_range['years_count']
+        
+        min_temp_f = celsius_to_fahrenheit(min_temp)
+        max_temp_hist_f = celsius_to_fahrenheit(max_temp_hist)
+        avg_temp_f = celsius_to_fahrenheit(avg_temp)
+        
+        message += f"""
+
+## 📊 过去{years_count}年同一天温度区间
+• **最低:** {min_temp:.1f}°C / {min_temp_f:.1f}°F  
+• **最高:** {max_temp_hist:.1f}°C / {max_temp_hist_f:.1f}°F  
+• **平均:** {avg_temp:.1f}°C / {avg_temp_f:.1f}°F"""
+    
+    message += "\n\n⚠️ *本程序仅用于信息提醒，不做任何交易决策*"
+    
+    return message
 
 
 def format_temperature_message(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
@@ -530,9 +662,25 @@ def check_and_send_alerts(force_send: bool = False):
         
         # 发送通知
         if should_send:
-            message = format_temperature_message(airport, max_temp, last_year_temp, historical_range)
-            if send_telegram_message(message):
-                print(f"  ✅ 已发送 {airport} 提醒消息")
+            # 发送到 Telegram
+            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range)
+            telegram_success = send_telegram_message(telegram_message)
+            
+            # 发送到企业微信（如果配置了）
+            wechat_success = False
+            if WECHAT_WEBHOOK_URL and WECHAT_WEBHOOK_URL != '':
+                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range)
+                wechat_success = send_wechat_message(wechat_message)
+            
+            # 打印发送结果
+            results = []
+            if telegram_success:
+                results.append("Telegram")
+            if wechat_success:
+                results.append("企业微信")
+            
+            if results:
+                print(f"  ✅ 已发送 {airport} 提醒消息到: {', '.join(results)}")
             else:
                 print(f"  ❌ 发送 {airport} 提醒消息失败")
     
@@ -573,4 +721,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
