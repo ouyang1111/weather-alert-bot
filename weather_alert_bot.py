@@ -30,10 +30,42 @@ CHECK_INTERVAL_MINUTES = 60
 
 # ==================== 机场坐标（固定，不要修改）====================
 AIRPORTS = {
-    '纽约 LGA': {'lat': 40.7769, 'lon': -73.8740, 'code': 'LGA', 'name_cn': '纽约'},
-    '多伦多 YYZ': {'lat': 43.6777, 'lon': -79.6248, 'code': 'YYZ', 'name_cn': '多伦多'},
-    '伦敦 LCY': {'lat': 51.5053, 'lon': 0.0553, 'code': 'LCY', 'name_cn': '伦敦'},
-    '首尔 ICN': {'lat': 37.4602, 'lon': 126.4407, 'code': 'ICN', 'name_cn': '首尔'},
+    '纽约 LGA': {
+        'lat': 40.7769, 
+        'lon': -73.8740, 
+        'code': 'LGA', 
+        'name_cn': '纽约', 
+        'wunderground_code': 'KLGA',
+        'wunderground_url': 'https://www.wunderground.com/history/daily/us/ny/new-york-city/KLGA',
+        'windy_url': 'https://www.windy.com/40.775/-73.873?36.855,-73.873,5,p:cities'
+    },
+    '多伦多 YYZ': {
+        'lat': 43.6777, 
+        'lon': -79.6248, 
+        'code': 'YYZ', 
+        'name_cn': '多伦多', 
+        'wunderground_code': 'CYYZ',
+        'wunderground_url': 'https://www.wunderground.com/history/daily/ca/mississauga/CYYZ',
+        'windy_url': 'https://www.windy.com/43.678/-79.629?43.231,-79.319,9,p:cities'
+    },
+    '伦敦 LCY': {
+        'lat': 51.5053, 
+        'lon': 0.0553, 
+        'code': 'LCY', 
+        'name_cn': '伦敦', 
+        'wunderground_code': 'EGLC',
+        'wunderground_url': 'https://www.wunderground.com/history/daily/gb/london/EGLC',
+        'windy_url': 'https://www.windy.com/51.505/0.053?51.503,0.065,15,p:cities'
+    },
+    '首尔 ICN': {
+        'lat': 37.4602, 
+        'lon': 126.4407, 
+        'code': 'ICN', 
+        'name_cn': '首尔', 
+        'wunderground_code': 'RKSI',
+        'wunderground_url': 'https://www.wunderground.com/history/daily/kr/incheon/RKSI',
+        'windy_url': 'https://www.windy.com/37.464/126.440?37.214,126.440,9,p:cities'
+    },
 }
 
 # ==================== API 配置 ====================
@@ -289,6 +321,84 @@ def get_today_max_temp(weather_data: Dict) -> Optional[float]:
         return None
 
 
+def get_wunderground_temp(airport_code: str) -> Optional[float]:
+    """
+    从 Wunderground 获取机场当天最高温度
+    
+    Args:
+        airport_code: 机场代码（ICAO格式，如KLGA）
+    
+    Returns:
+        当天最高温度（摄氏度），如果失败返回 None
+    """
+    try:
+        # 使用 wttr.in 作为数据源（它使用多个数据源包括Wunderground）
+        url = f'https://wttr.in/{airport_code}?format=j1'
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            # 获取当天的最高温度
+            if 'weather' in data and len(data['weather']) > 0:
+                today = data['weather'][0]
+                max_temp_c = today.get('maxtempC')
+                if max_temp_c:
+                    return float(max_temp_c)
+    except Exception as e:
+        print(f"获取 Wunderground 温度失败: {e}")
+    
+    return None
+
+
+def get_windy_temp(airport_code: str, latitude: float, longitude: float) -> Optional[float]:
+    """
+    从 Windy 获取机场当天最高温度
+    
+    Args:
+        airport_code: 机场代码（ICAO格式）
+        latitude: 纬度
+        longitude: 经度
+    
+    Returns:
+        当天最高温度（摄氏度），如果失败返回 None
+    """
+    try:
+        # 使用 Open-Meteo API 作为 Windy 的参考数据源
+        params = {
+            'latitude': latitude,
+            'longitude': longitude,
+            'hourly': 'temperature_2m',
+            'timezone': 'auto',
+            'forecast_days': 1,
+        }
+        
+        response = requests.get('https://api.open-meteo.com/v1/forecast', params=params, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            hourly_data = data.get('hourly', {})
+            times = hourly_data.get('time', [])
+            temperatures = hourly_data.get('temperature_2m', [])
+            
+            if times and temperatures:
+                # 获取当天的最高温度
+                today = datetime.utcnow().strftime('%Y-%m-%d')
+                today_temps = []
+                for i, time_str in enumerate(times):
+                    if time_str.startswith(today):
+                        temp = temperatures[i]
+                        if temp is not None:
+                            today_temps.append(temp)
+                
+                if today_temps:
+                    return max(today_temps)
+    except Exception as e:
+        print(f"获取 Windy 温度失败: {e}")
+    
+    return None
+
+
 def get_future_days_max_temp(weather_data: Dict, days: int = 3) -> Dict[str, float]:
     """
     从天气数据中提取未来N天的最高温度
@@ -431,7 +541,8 @@ def get_korea_time() -> str:
 
 
 def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
-                                      historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None) -> str:
+                                      historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None,
+                                      wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None) -> str:
     """
     格式化温度提醒消息（企业微信 Markdown 格式）
     
@@ -441,6 +552,8 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
         future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
+        wunderground_temp: Wunderground 数据源的当天最高温度
+        windy_temp: Windy 数据源的当天最高温度
     
     Returns:
         格式化后的消息（Markdown格式）
@@ -485,8 +598,26 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
 **🕐 更新时间（韩国时间 KST UTC+9）:** {korea_time}
 
 ## 📊 当天预测最高温度
-**{max_temp:.1f}°C / {max_temp_f:.1f}°F**
+**{max_temp:.1f}°C / {max_temp_f:.1f}°F** (Open-Meteo)
 
+## 🌐 其他数据源对比
+"""
+    
+    # 添加Wunderground温度
+    if wunderground_temp is not None:
+        wunderground_temp_f = celsius_to_fahrenheit(wunderground_temp)
+        message += f"• **Wunderground:** {wunderground_temp:.1f}°C / {wunderground_temp_f:.1f}°F\n"
+    else:
+        message += "• **Wunderground:** 数据暂不可用\n"
+    
+    # 添加Windy温度
+    if windy_temp is not None:
+        windy_temp_f = celsius_to_fahrenheit(windy_temp)
+        message += f"• **Windy:** {windy_temp:.1f}°C / {windy_temp_f:.1f}°F\n"
+    else:
+        message += "• **Windy:** 数据暂不可用\n"
+    
+    message += f"""
 ## 📈 三个参考值
 • {ref_minus:.1f}°C / {ref_minus_f:.1f}°F (最高温 -1°C)  
 • {ref_center:.1f}°C / {ref_center_f:.1f}°F (最高温)  
@@ -550,13 +681,24 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
             else:
                 message += f"\n• **{date_display}:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
     
-    message += "\n\n⚠️ *本程序仅用于信息提醒，不做任何交易决策*"
+    # 获取 Wunderground 和 Windy 网址（从配置中直接读取）
+    wunderground_url = airport_info.get('wunderground_url', 'https://www.wunderground.com')
+    windy_url = airport_info.get('windy_url', 'https://www.windy.com')
+    
+    message += f"""
+
+## 🔗 相关网站链接
+• [Wunderground 天气]({wunderground_url})  
+• [Windy 天气]({windy_url})
+    
+⚠️ *本程序仅用于信息提醒，不做任何交易决策*"""
     
     return message
 
 
 def format_temperature_message(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
-                                historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None) -> str:
+                                historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None,
+                                wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None) -> str:
     """
     格式化温度提醒消息
     
@@ -566,6 +708,8 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
         future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
+        wunderground_temp: Wunderground 数据源的当天最高温度
+        windy_temp: Windy 数据源的当天最高温度
     
     Returns:
         格式化后的消息
@@ -611,7 +755,25 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
 🕐 <b>更新时间（韩国时间 KST UTC+9）:</b> {korea_time}
 
 📊 <b>当天预测最高温度:</b>
-   {max_temp:.1f}°C / {max_temp_f:.1f}°F
+   {max_temp:.1f}°C / {max_temp_f:.1f}°F (Open-Meteo)
+
+🌐 <b>其他数据源对比:</b>"""
+    
+    # 添加Wunderground温度
+    if wunderground_temp is not None:
+        wunderground_temp_f = celsius_to_fahrenheit(wunderground_temp)
+        message += f"\n   • <b>Wunderground:</b> {wunderground_temp:.1f}°C / {wunderground_temp_f:.1f}°F"
+    else:
+        message += "\n   • <b>Wunderground:</b> 数据暂不可用"
+    
+    # 添加Windy温度
+    if windy_temp is not None:
+        windy_temp_f = celsius_to_fahrenheit(windy_temp)
+        message += f"\n   • <b>Windy:</b> {windy_temp:.1f}°C / {windy_temp_f:.1f}°F"
+    else:
+        message += "\n   • <b>Windy:</b> 数据暂不可用"
+    
+    message += f"""
 
 📈 <b>三个参考值:</b>
    • {ref_minus:.1f}°C / {ref_minus_f:.1f}°F (最高温 -1°C)
@@ -676,7 +838,17 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
             else:
                 message += f"\n   • {date_display}: {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
     
-    message += "\n\n⚠️ <i>本程序仅用于信息提醒，不做任何交易决策</i>"
+    # 获取 Wunderground 和 Windy 网址（从配置中直接读取）
+    wunderground_url = airport_info.get('wunderground_url', 'https://www.wunderground.com')
+    windy_url = airport_info.get('windy_url', 'https://www.windy.com')
+    
+    message += f"""
+
+🔗 <b>相关网站链接:</b>
+   • <a href="{wunderground_url}">Wunderground 天气</a>
+   • <a href="{windy_url}">Windy 天气</a>
+    
+⚠️ <i>本程序仅用于信息提醒，不做任何交易决策</i>"""
     
     return message.strip()
 
@@ -755,6 +927,32 @@ def check_and_send_alerts(force_send: bool = False):
         current_max_temps[airport] = max_temp
         print(f"  ✅ {airport} 当天最高温度: {max_temp:.1f}°C")
         
+        # 获取Wunderground和Windy的温度
+        wunderground_temp = None
+        windy_temp = None
+        
+        try:
+            airport_info = AIRPORTS.get(airport, {})
+            wunderground_code = airport_info.get('wunderground_code', '')
+            
+            if wunderground_code:
+                print(f"  🌐 正在获取 Wunderground 数据...")
+                wunderground_temp = get_wunderground_temp(wunderground_code)
+                if wunderground_temp is not None:
+                    print(f"  ✅ Wunderground 温度: {wunderground_temp:.1f}°C")
+                else:
+                    print(f"  ⚠️ Wunderground 数据获取失败")
+            
+            # 获取 Windy 温度数据
+            print(f"  🌐 正在获取 Windy 数据...")
+            windy_temp = get_windy_temp('', coords['lat'], coords['lon'])
+            if windy_temp is not None:
+                print(f"  ✅ Windy 温度: {windy_temp:.1f}°C")
+            else:
+                print(f"  ⚠️ Windy 数据获取失败")
+        except Exception as e:
+            print(f"  ⚠️ 获取其他数据源失败: {e}")
+        
         # 获取历史数据
         today_str = datetime.now().strftime('%Y-%m-%d')
         last_year_temp = None
@@ -823,13 +1021,13 @@ def check_and_send_alerts(force_send: bool = False):
         # 发送通知
         if should_send:
             # 发送到 Telegram
-            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range, future_days)
+            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp)
             telegram_success = send_telegram_message(telegram_message)
             
             # 发送到企业微信（如果配置了）
             wechat_success = False
             if WECHAT_WEBHOOK_URL and WECHAT_WEBHOOK_URL != '':
-                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range, future_days)
+                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp)
                 wechat_success = send_wechat_message(wechat_message)
             
             # 打印发送结果
