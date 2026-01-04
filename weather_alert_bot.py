@@ -7,6 +7,7 @@
 
 import os
 import json
+import time
 import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
@@ -63,8 +64,25 @@ def get_weather_forecast(latitude: float, longitude: float) -> Optional[Dict]:
             'timezone': 'auto',
         }
         
-        response = requests.get(API_BASE_URL, params=params, timeout=10)
-        response.raise_for_status()
+        # 增加超时时间并添加重试
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(API_BASE_URL, params=params, timeout=20)
+                response.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    print(f"   ⚠️ 请求超时，重试中... ({attempt + 1}/{max_retries})")
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"   ⚠️ 请求失败，重试中... ({attempt + 1}/{max_retries})")
+                    continue
+                else:
+                    raise
         
         data = response.json()
         return data
@@ -96,8 +114,23 @@ def get_historical_weather(latitude: float, longitude: float, start_date: str, e
             'timezone': 'auto',
         }
         
-        response = requests.get(HISTORICAL_API_URL, params=params, timeout=15)
-        response.raise_for_status()
+        # 增加超时时间并添加重试
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(HISTORICAL_API_URL, params=params, timeout=20)
+                response.raise_for_status()
+                break
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise
         
         data = response.json()
         return data
@@ -430,10 +463,19 @@ def check_and_send_alerts(force_send: bool = False):
     for airport, coords in AIRPORTS.items():
         print(f"正在检查 {airport}...")
         
-        # 获取天气数据
-        weather_data = get_weather_forecast(coords['lat'], coords['lon'])
+        # 获取天气数据（带重试）
+        weather_data = None
+        max_retries = 2
+        for retry in range(max_retries):
+            weather_data = get_weather_forecast(coords['lat'], coords['lon'])
+            if weather_data is not None:
+                break
+            if retry < max_retries - 1:
+                print(f"  ⚠️ 获取 {airport} 天气数据失败，重试中... ({retry + 1}/{max_retries})")
+                time.sleep(2)  # 等待2秒后重试
+        
         if weather_data is None:
-            print(f"  ❌ 获取 {airport} 天气数据失败")
+            print(f"  ❌ 获取 {airport} 天气数据失败（已重试{max_retries}次）")
             continue
         
         # 获取当天最高温度
@@ -531,3 +573,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
