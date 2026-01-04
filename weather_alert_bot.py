@@ -289,6 +289,51 @@ def get_today_max_temp(weather_data: Dict) -> Optional[float]:
         return None
 
 
+def get_future_days_max_temp(weather_data: Dict, days: int = 3) -> Dict[str, float]:
+    """
+    从天气数据中提取未来N天的最高温度
+    
+    Args:
+        weather_data: API 返回的天气数据
+        days: 要获取的未来天数（默认3天）
+    
+    Returns:
+        字典，键为日期字符串（YYYY-MM-DD），值为该天的最高温度（摄氏度）
+    """
+    result = {}
+    try:
+        hourly_data = weather_data.get('hourly', {})
+        times = hourly_data.get('time', [])
+        temperatures = hourly_data.get('temperature_2m', [])
+        
+        if not times or not temperatures:
+            return result
+        
+        # 获取当前日期（UTC）
+        now = datetime.utcnow()
+        
+        # 获取未来N天的日期
+        for day_offset in range(1, days + 1):
+            future_date = now + timedelta(days=day_offset)
+            future_date_str = future_date.strftime('%Y-%m-%d')
+            
+            # 筛选出当天的温度数据
+            day_temps = []
+            for i, time_str in enumerate(times):
+                if time_str.startswith(future_date_str):
+                    temp = temperatures[i]
+                    if temp is not None:
+                        day_temps.append(temp)
+            
+            if day_temps:
+                result[future_date_str] = max(day_temps)
+        
+        return result
+    except Exception as e:
+        print(f"解析未来温度数据失败: {e}")
+        return result
+
+
 def send_telegram_message(message: str) -> bool:
     """
     通过 Telegram Bot 发送消息
@@ -386,7 +431,7 @@ def get_korea_time() -> str:
 
 
 def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
-                                      historical_range: Optional[Dict] = None) -> str:
+                                      historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None) -> str:
     """
     格式化温度提醒消息（企业微信 Markdown 格式）
     
@@ -395,6 +440,7 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
     
     Returns:
         格式化后的消息（Markdown格式）
@@ -477,13 +523,40 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
 • **最高:** {max_temp_hist:.1f}°C / {max_temp_hist_f:.1f}°F  
 • **平均:** {avg_temp:.1f}°C / {avg_temp_f:.1f}°F"""
     
+    # 添加未来3天的天气预报
+    if future_days and isinstance(future_days, dict):
+        message += "\n\n## 📅 未来3天天气预报"
+        for date_str in sorted(future_days.keys()):
+            day_data = future_days.get(date_str, {})
+            if not isinstance(day_data, dict):
+                continue
+            future_max_temp = day_data.get('max_temp', 0)
+            last_year_temp_future = day_data.get('last_year_temp', None)
+            
+            # 格式化日期显示
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                date_display = date_obj.strftime('%m月%d日')
+                last_year_date_display = date_obj.replace(year=date_obj.year - 1).strftime('%Y年%m月%d日')
+            except:
+                date_display = date_str
+                last_year_date_display = None
+            
+            future_max_temp_f = celsius_to_fahrenheit(future_max_temp)
+            
+            if last_year_temp_future is not None:
+                last_year_temp_future_f = celsius_to_fahrenheit(last_year_temp_future)
+                message += f"\n• **{date_display}:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
+            else:
+                message += f"\n• **{date_display}:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
+    
     message += "\n\n⚠️ *本程序仅用于信息提醒，不做任何交易决策*"
     
     return message
 
 
 def format_temperature_message(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
-                                historical_range: Optional[Dict] = None) -> str:
+                                historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None) -> str:
     """
     格式化温度提醒消息
     
@@ -492,6 +565,7 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
     
     Returns:
         格式化后的消息
@@ -574,6 +648,33 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
    • 最低: {min_temp:.1f}°C / {min_temp_f:.1f}°F
    • 最高: {max_temp_hist:.1f}°C / {max_temp_hist_f:.1f}°F
    • 平均: {avg_temp:.1f}°C / {avg_temp_f:.1f}°F"""
+    
+    # 添加未来3天的天气预报
+    if future_days and isinstance(future_days, dict):
+        message += "\n\n📅 <b>未来3天天气预报:</b>"
+        for date_str in sorted(future_days.keys()):
+            day_data = future_days.get(date_str, {})
+            if not isinstance(day_data, dict):
+                continue
+            future_max_temp = day_data.get('max_temp', 0)
+            last_year_temp_future = day_data.get('last_year_temp', None)
+            
+            # 格式化日期显示
+            try:
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                date_display = date_obj.strftime('%m月%d日')
+                last_year_date_display = date_obj.replace(year=date_obj.year - 1).strftime('%Y年%m月%d日')
+            except:
+                date_display = date_str
+                last_year_date_display = None
+            
+            future_max_temp_f = celsius_to_fahrenheit(future_max_temp)
+            
+            if last_year_temp_future is not None:
+                last_year_temp_future_f = celsius_to_fahrenheit(last_year_temp_future)
+                message += f"\n   • {date_display}: {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
+            else:
+                message += f"\n   • {date_display}: {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
     
     message += "\n\n⚠️ <i>本程序仅用于信息提醒，不做任何交易决策</i>"
     
@@ -671,6 +772,30 @@ def check_and_send_alerts(force_send: bool = False):
         except Exception as e:
             print(f"  ⚠️ 获取历史数据失败: {e}")
         
+        # 获取未来3天的天气预报
+        future_days = {}
+        try:
+            print(f"  🔮 正在获取 {airport} 未来3天天气预报...")
+            future_days_raw = get_future_days_max_temp(weather_data, days=3)
+            
+            # 为每一天获取去年同一天的温度
+            for date_str, future_max_temp in future_days_raw.items():
+                last_year_temp_future = None
+                try:
+                    last_year_temp_future = get_last_year_same_date_temp(coords['lat'], coords['lon'], date_str)
+                except Exception as e:
+                    print(f"    ⚠️ 获取 {date_str} 去年温度失败: {e}")
+                
+                future_days[date_str] = {
+                    'max_temp': future_max_temp,
+                    'last_year_temp': last_year_temp_future
+                }
+            
+            if future_days:
+                print(f"  ✅ 已获取未来3天天气预报")
+        except Exception as e:
+            print(f"  ⚠️ 获取未来3天天气预报失败: {e}")
+        
         # 判断是否需要发送通知
         should_send = False
         
@@ -698,13 +823,13 @@ def check_and_send_alerts(force_send: bool = False):
         # 发送通知
         if should_send:
             # 发送到 Telegram
-            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range)
+            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range, future_days)
             telegram_success = send_telegram_message(telegram_message)
             
             # 发送到企业微信（如果配置了）
             wechat_success = False
             if WECHAT_WEBHOOK_URL and WECHAT_WEBHOOK_URL != '':
-                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range)
+                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range, future_days)
                 wechat_success = send_wechat_message(wechat_message)
             
             # 打印发送结果
@@ -756,4 +881,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
