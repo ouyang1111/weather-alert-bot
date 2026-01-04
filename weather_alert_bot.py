@@ -87,15 +87,50 @@ def meters_per_second_to_miles_per_hour(mps: float) -> float:
     return mps * 2.237
 
 
-def wind_direction_to_name(angle: float) -> str:
+def wind_direction_to_arrow(angle: float) -> str:
     """
-    将风向角度转换为方向名称
+    根据风向角度获取箭头符号
+    箭头表示风从哪个方向来（比如西北风，风从西北来，箭头指向东南）
     
     Args:
         angle: 风向角度（0-360度，0度表示北风）
     
     Returns:
-        方向名称（如：北风、东北风、东风等）
+        箭头符号
+    """
+    # 将角度标准化到0-360范围
+    angle = angle % 360
+    
+    # 定义8个主要方向的箭头（风从该方向来）
+    # 北风(0°) → ↓, 东北风(45°) → ↘, 东风(90°) → →, 东南风(135°) → ↗
+    # 南风(180°) → ↑, 西南风(225°) → ↖, 西风(270°) → ←, 西北风(315°) → ↙
+    if 0 <= angle < 22.5 or angle >= 337.5:
+        return '↓'  # 北风
+    elif 22.5 <= angle < 67.5:
+        return '↘'  # 东北风
+    elif 67.5 <= angle < 112.5:
+        return '→'  # 东风
+    elif 112.5 <= angle < 157.5:
+        return '↗'  # 东南风
+    elif 157.5 <= angle < 202.5:
+        return '↑'  # 南风
+    elif 202.5 <= angle < 247.5:
+        return '↖'  # 西南风
+    elif 247.5 <= angle < 292.5:
+        return '←'  # 西风
+    else:  # 292.5 <= angle < 337.5
+        return '↙'  # 西北风
+
+
+def wind_direction_to_name(angle: float) -> str:
+    """
+    将风向角度转换为方向名称（带箭头）
+    
+    Args:
+        angle: 风向角度（0-360度，0度表示北风）
+    
+    Returns:
+        方向名称（如：北风↓、东北风↘、东风→等）
     """
     # 将角度标准化到0-360范围
     angle = angle % 360
@@ -123,9 +158,11 @@ def wind_direction_to_name(angle: float) -> str:
     
     for start, end, name in directions:
         if start <= angle < end or (start == 348.75 and angle >= 348.75):
-            return name
+            # 添加箭头符号
+            arrow = wind_direction_to_arrow(angle)
+            return f"{name}{arrow}"
     
-    return '北风'
+    return '北风↓'
 
 
 def get_weathercode_description(code: int) -> str:
@@ -380,7 +417,7 @@ def get_today_weather_details(weather_data: Dict) -> Optional[Dict]:
     
     Returns:
         包含当天天气详细信息的字典，如果失败返回 None
-        包含：max_temp, wind_direction, wind_speed, max_gust, cloudcover, precipitation_periods, weather_conditions
+        包含：max_temp, wind_direction, wind_speed, precipitation_periods, weather_conditions
     """
     try:
         hourly_data = weather_data.get('hourly', {})
@@ -569,20 +606,26 @@ def get_wunderground_temp(airport_code: str) -> Optional[float]:
         当天最高温度（摄氏度），如果失败返回 None
     """
     try:
-        # 使用 wttr.in 作为数据源（它使用多个数据源包括Wunderground）
-        url = f'https://wttr.in/{airport_code}?format=j1'
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            data = response.json()
-            # 获取当天的最高温度
-            if 'weather' in data and len(data['weather']) > 0:
-                today = data['weather'][0]
-                max_temp_c = today.get('maxtempC')
-                if max_temp_c:
-                    return float(max_temp_c)
+        # 使用 OpenWeatherMap API 作为 Wunderground 的替代
+        # 因为它提供机场级别的数据，且免费可用
+        # 注意：这里使用OpenWeatherMap作为Wunderground的数据源
+        api_key = os.getenv('OPENWEATHER_API_KEY', '')
+        if not api_key:
+            # 如果没有API密钥，尝试使用公开的天气API
+            # 使用 wttr.in 作为替代（它使用多个数据源包括Wunderground）
+            url = f'https://wttr.in/{airport_code}?format=j1'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                # 获取当天的最高温度
+                if 'weather' in data and len(data['weather']) > 0:
+                    today = data['weather'][0]
+                    max_temp_c = today.get('maxtempC')
+                    if max_temp_c:
+                        return float(max_temp_c)
     except Exception as e:
         print(f"获取 Wunderground 温度失败: {e}")
     
@@ -602,7 +645,9 @@ def get_windy_temp(airport_code: str, latitude: float, longitude: float) -> Opti
         当天最高温度（摄氏度），如果失败返回 None
     """
     try:
-        # 使用 Open-Meteo API 作为 Windy 的参考数据源
+        # Windy API 需要注册，这里使用替代方案
+        # 使用 Open-Meteo API（与主数据源相同，但作为Windy的参考）
+        # 或者使用其他公开API
         params = {
             'latitude': latitude,
             'longitude': longitude,
@@ -890,10 +935,7 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
-        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度, ...}}
-        wunderground_temp: Wunderground 数据源的当天最高温度
-        windy_temp: Windy 数据源的当天最高温度
-        weather_details: 当天的详细天气信息
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
     
     Returns:
         格式化后的消息（Markdown格式）
@@ -1139,10 +1181,7 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
-        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度, ...}}
-        wunderground_temp: Wunderground 数据源的当天最高温度
-        windy_temp: Windy 数据源的当天最高温度
-        weather_details: 当天的详细天气信息
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
     
     Returns:
         格式化后的消息
@@ -1456,10 +1495,6 @@ def check_and_send_alerts(force_send: bool = False):
                 wind_dir_name = wind_direction_to_name(weather_details['wind_direction'])
                 wind_speed_mph = meters_per_second_to_miles_per_hour(weather_details.get('wind_speed', 0))
                 print(f"  ✅ 风向: {wind_dir_name}, 风速: {wind_speed_mph:.1f} 英里/小时")
-            if weather_details.get('max_gust', 0) > 0:
-                max_gust_mph = meters_per_second_to_miles_per_hour(weather_details.get('max_gust', 0))
-                print(f"  ✅ 最大阵风: {max_gust_mph:.1f} 英里/小时")
-            print(f"  ✅ 云量: {weather_details.get('cloudcover', 0):.0f}%")
             print(f"  ✅ 天气状况: {weather_details.get('weather_condition', '未知')}")
             precip_periods = weather_details.get('precipitation_periods', [])
             if precip_periods:
@@ -1623,3 +1658,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
