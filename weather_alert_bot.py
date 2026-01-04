@@ -405,8 +405,13 @@ def save_state(state: Dict):
         print(f"保存状态文件失败: {e}")
 
 
-def check_and_send_alerts():
-    """检查所有机场的天气并发送提醒"""
+def check_and_send_alerts(force_send: bool = False):
+    """
+    检查所有机场的天气并发送提醒
+    
+    Args:
+        force_send: 如果为 True，强制发送所有机场的消息（用于手动触发）
+    """
     # 加载上次的状态
     state = load_state()
     last_max_temps = state.get('last_max_temps', {airport: None for airport in AIRPORTS.keys()})
@@ -416,6 +421,8 @@ def check_and_send_alerts():
     is_new_day = (last_check_date != current_date)
     
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始检查天气...")
+    if force_send:
+        print("  🔔 强制发送模式：将发送所有机场的消息")
     
     # 更新当前最高温度
     current_max_temps = {}
@@ -458,8 +465,13 @@ def check_and_send_alerts():
         # 判断是否需要发送通知
         should_send = False
         
+        # 强制发送模式（手动触发时）
+        if force_send:
+            should_send = True
+            print(f"  🔔 强制发送模式：将发送消息")
+        
         # 条件1：每天第一次计算完成
-        if is_new_day:
+        elif is_new_day:
             should_send = True
             print(f"  📅 新的一天，发送首次提醒")
         
@@ -470,7 +482,7 @@ def check_and_send_alerts():
                 print(f"  🔄 温度变化: {last_max_temps[airport]:.1f}°C → {max_temp:.1f}°C")
         
         # 如果是第一次运行（所有值都是 None）
-        if last_max_temps.get(airport) is None:
+        elif last_max_temps.get(airport) is None:
             should_send = True
             print(f"  🆕 首次运行，发送提醒")
         
@@ -509,8 +521,12 @@ def main():
         print("   请在 GitHub Actions Secrets 中设置 TELEGRAM_CHAT_ID")
         return
     
-    # 执行检查
-    check_and_send_alerts()
+    # 检查是否是手动触发（通过环境变量判断）
+    # GitHub Actions 手动触发时会设置 GITHUB_EVENT_NAME=workflow_dispatch
+    is_manual_trigger = os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+    
+    # 执行检查（手动触发时强制发送）
+    check_and_send_alerts(force_send=is_manual_trigger)
 
 
 if __name__ == '__main__':
