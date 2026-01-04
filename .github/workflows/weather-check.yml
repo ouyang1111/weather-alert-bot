@@ -1,0 +1,47 @@
+name: 机场天气检查
+
+on:
+  # 定时触发：每 60 分钟运行一次
+  schedule:
+    - cron: '0 * * * *'  # 每小时的第 0 分钟运行（即每小时运行一次）
+  
+  # 允许手动触发
+  workflow_dispatch:
+
+jobs:
+  check-weather:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: 恢复状态文件（从缓存）
+      uses: actions/cache@v4
+      id: cache-state
+      with:
+        path: weather_state.json
+        key: weather-state-${{ github.repository }}
+    
+    - name: 安装依赖
+      run: |
+        pip install -r requirements.txt
+    
+    - name: 运行天气检查程序
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python weather_alert_bot.py
+    
+    - name: 保存状态文件（到缓存）
+      uses: actions/cache@v4
+      if: always()
+      with:
+        path: weather_state.json
+        key: weather-state-${{ github.repository }}
