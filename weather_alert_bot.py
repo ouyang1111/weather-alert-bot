@@ -33,6 +33,7 @@ AIRPORTS = {
 
 # ==================== API 配置 ====================
 API_BASE_URL = 'https://api.open-meteo.com/v1/forecast'
+HISTORICAL_API_URL = 'https://archive-api.open-meteo.com/v1/archive'
 
 # ==================== 状态文件路径（用于保存上次检查的数据）====================
 STATE_FILE = 'weather_state.json'
@@ -69,6 +70,145 @@ def get_weather_forecast(latitude: float, longitude: float) -> Optional[Dict]:
         return data
     except Exception as e:
         print(f"获取天气数据失败: {e}")
+        return None
+
+
+def get_historical_weather(latitude: float, longitude: float, start_date: str, end_date: str) -> Optional[Dict]:
+    """
+    从 Open-Meteo 历史API获取历史天气数据
+    
+    Args:
+        latitude: 纬度
+        longitude: 经度
+        start_date: 开始日期 (YYYY-MM-DD)
+        end_date: 结束日期 (YYYY-MM-DD)
+    
+    Returns:
+        包含历史天气数据的字典，如果失败返回 None
+    """
+    try:
+        params = {
+            'latitude': latitude,
+            'longitude': longitude,
+            'start_date': start_date,
+            'end_date': end_date,
+            'hourly': 'temperature_2m',
+            'timezone': 'auto',
+        }
+        
+        response = requests.get(HISTORICAL_API_URL, params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        return data
+    except Exception as e:
+        print(f"获取历史天气数据失败: {e}")
+        return None
+
+
+def get_last_year_same_date_temp(latitude: float, longitude: float, target_date: str) -> Optional[float]:
+    """
+    获取去年同一天的最高温度
+    
+    Args:
+        latitude: 纬度
+        longitude: 经度
+        target_date: 目标日期 (YYYY-MM-DD)
+    
+    Returns:
+        去年同一天的最高温度（摄氏度），如果失败返回 None
+    """
+    try:
+        # 计算去年同一天的日期
+        target = datetime.strptime(target_date, '%Y-%m-%d')
+        last_year_date = target.replace(year=target.year - 1)
+        last_year_str = last_year_date.strftime('%Y-%m-%d')
+        
+        # 获取历史数据
+        historical_data = get_historical_weather(latitude, longitude, last_year_str, last_year_str)
+        if historical_data is None:
+            return None
+        
+        hourly_data = historical_data.get('hourly', {})
+        times = hourly_data.get('time', [])
+        temperatures = hourly_data.get('temperature_2m', [])
+        
+        if not times or not temperatures:
+            return None
+        
+        # 筛选出当天的温度数据
+        day_temps = []
+        for i, time_str in enumerate(times):
+            if time_str.startswith(last_year_str):
+                temp = temperatures[i]
+                if temp is not None:
+                    day_temps.append(temp)
+        
+        if not day_temps:
+            return None
+        
+        return max(day_temps)
+    except Exception as e:
+        print(f"获取去年同一天温度失败: {e}")
+        return None
+
+
+def get_historical_temp_range(latitude: float, longitude: float, target_date: str, years: int = 5) -> Optional[Dict]:
+    """
+    获取过去N年同一天的温度范围
+    
+    Args:
+        latitude: 纬度
+        longitude: 经度
+        target_date: 目标日期 (YYYY-MM-DD)
+        years: 查询的年数（默认5年）
+    
+    Returns:
+        包含 min_temp, max_temp, avg_temp 的字典，如果失败返回 None
+    """
+    try:
+        target = datetime.strptime(target_date, '%Y-%m-%d')
+        temps = []
+        
+        # 获取过去N年同一天的温度
+        for year_offset in range(1, years + 1):
+            historical_date = target.replace(year=target.year - year_offset)
+            historical_str = historical_date.strftime('%Y-%m-%d')
+            
+            historical_data = get_historical_weather(latitude, longitude, historical_str, historical_str)
+            if historical_data is None:
+                continue
+            
+            hourly_data = historical_data.get('hourly', {})
+            times = hourly_data.get('time', [])
+            temperatures = hourly_data.get('temperature_2m', [])
+            
+            if not times or not temperatures:
+                continue
+            
+            # 筛选出当天的温度数据
+            day_temps = []
+            for i, time_str in enumerate(times):
+                if time_str.startswith(historical_str):
+                    temp = temperatures[i]
+                    if temp is not None:
+                        day_temps.append(temp)
+            
+            if day_temps:
+                max_temp = max(day_temps)
+                temps.append(max_temp)
+        
+        if not temps:
+            return None
+        
+        return {
+            'min_temp': min(temps),
+            'max_temp': max(temps),
+            'avg_temp': sum(temps) / len(temps),
+            'years_count': len(temps)
+        }
+    except Exception as e:
+        print(f"获取历史温度范围失败: {e}")
         return None
 
 
@@ -146,13 +286,16 @@ def get_beijing_time() -> str:
     return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
-def format_temperature_message(airport: str, max_temp: float) -> str:
+def format_temperature_message(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
+                                historical_range: Optional[Dict] = None) -> str:
     """
     格式化温度提醒消息
     
     Args:
         airport: 机场名称
         max_temp: 最高温度（摄氏度）
+        last_year_temp: 去年同一天的最高温度
+        historical_range: 历史温度范围数据
     
     Returns:
         格式化后的消息
@@ -182,6 +325,11 @@ def format_temperature_message(airport: str, max_temp: float) -> str:
     # 获取北京时间
     beijing_time = get_beijing_time()
     
+    # 获取当前日期（用于显示去年日期）
+    today = datetime.now()
+    last_year_date = today.replace(year=today.year - 1)
+    last_year_str = last_year_date.strftime('%Y年%m月%d日')
+    
     message = f"""
 🌡️ <b>机场天气最高温预测提醒</b>
 
@@ -194,10 +342,41 @@ def format_temperature_message(airport: str, max_temp: float) -> str:
 📈 <b>三个参考值:</b>
    • {ref_minus:.1f}°C / {ref_minus_f:.1f}°F (最高温 -1°C)
    • {ref_center:.1f}°C / {ref_center_f:.1f}°F (最高温)
-   • {ref_plus:.1f}°C / {ref_plus_f:.1f}°F (最高温 +1°C)
+   • {ref_plus:.1f}°C / {ref_plus_f:.1f}°F (最高温 +1°C)"""
+    
+    # 添加去年同一天的温度对比
+    if last_year_temp is not None:
+        last_year_temp_f = celsius_to_fahrenheit(last_year_temp)
+        diff = max_temp - last_year_temp
+        diff_f = celsius_to_fahrenheit(abs(diff))
+        diff_symbol = "↑" if diff > 0 else "↓" if diff < 0 else "="
+        
+        message += f"""
 
-⚠️ <i>本程序仅用于信息提醒，不做任何交易决策</i>
-"""
+📅 <b>历史对比:</b>
+   • {last_year_str}: {last_year_temp:.1f}°C / {last_year_temp_f:.1f}°F
+   • 今年对比去年: {diff_symbol} {abs(diff):.1f}°C / {diff_f:.1f}°F"""
+    
+    # 添加历史温度区间
+    if historical_range:
+        min_temp = historical_range['min_temp']
+        max_temp_hist = historical_range['max_temp']
+        avg_temp = historical_range['avg_temp']
+        years_count = historical_range['years_count']
+        
+        min_temp_f = celsius_to_fahrenheit(min_temp)
+        max_temp_hist_f = celsius_to_fahrenheit(max_temp_hist)
+        avg_temp_f = celsius_to_fahrenheit(avg_temp)
+        
+        message += f"""
+
+📊 <b>过去{years_count}年同一天温度区间:</b>
+   • 最低: {min_temp:.1f}°C / {min_temp_f:.1f}°F
+   • 最高: {max_temp_hist:.1f}°C / {max_temp_hist_f:.1f}°F
+   • 平均: {avg_temp:.1f}°C / {avg_temp_f:.1f}°F"""
+    
+    message += "\n\n⚠️ <i>本程序仅用于信息提醒，不做任何交易决策</i>"
+    
     return message.strip()
 
 
@@ -259,6 +438,23 @@ def check_and_send_alerts():
         current_max_temps[airport] = max_temp
         print(f"  ✅ {airport} 当天最高温度: {max_temp:.1f}°C")
         
+        # 获取历史数据
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        last_year_temp = None
+        historical_range = None
+        
+        try:
+            print(f"  📅 正在获取 {airport} 历史数据...")
+            last_year_temp = get_last_year_same_date_temp(coords['lat'], coords['lon'], today_str)
+            if last_year_temp is not None:
+                print(f"  ✅ 去年同一天温度: {last_year_temp:.1f}°C")
+            
+            historical_range = get_historical_temp_range(coords['lat'], coords['lon'], today_str, years=5)
+            if historical_range:
+                print(f"  ✅ 过去{historical_range['years_count']}年温度区间: {historical_range['min_temp']:.1f}°C - {historical_range['max_temp']:.1f}°C")
+        except Exception as e:
+            print(f"  ⚠️ 获取历史数据失败: {e}")
+        
         # 判断是否需要发送通知
         should_send = False
         
@@ -280,7 +476,7 @@ def check_and_send_alerts():
         
         # 发送通知
         if should_send:
-            message = format_temperature_message(airport, max_temp)
+            message = format_temperature_message(airport, max_temp, last_year_temp, historical_range)
             if send_telegram_message(message):
                 print(f"  ✅ 已发送 {airport} 提醒消息")
             else:
@@ -319,5 +515,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
