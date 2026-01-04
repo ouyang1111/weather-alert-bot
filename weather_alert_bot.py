@@ -358,6 +358,12 @@ def get_beijing_time() -> str:
     return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
+def get_utc_time() -> str:
+    """获取 UTC 时间"""
+    utc_time = datetime.utcnow()
+    return utc_time.strftime('%Y-%m-%d %H:%M:%S')
+
+
 def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
                                       historical_range: Optional[Dict] = None) -> str:
     """
@@ -396,6 +402,8 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
     
     # 获取北京时间
     beijing_time = get_beijing_time()
+    # 获取 UTC 时间
+    utc_time = get_utc_time()
     
     # 获取当前日期（用于显示去年日期）
     today = datetime.now()
@@ -405,7 +413,8 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
     message = f"""# 🌡️ 机场天气最高温预测提醒
 
 **📍 机场:** {airport_display}  
-**🕐 更新时间（北京时间）:** {beijing_time}
+**🕐 更新时间（北京时间）:** {beijing_time}  
+**🕐 更新时间（UTC）:** {utc_time}
 
 ## 📊 当天预测最高温度
 **{max_temp:.1f}°C / {max_temp_f:.1f}°F**
@@ -489,6 +498,8 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
     
     # 获取北京时间
     beijing_time = get_beijing_time()
+    # 获取 UTC 时间
+    utc_time = get_utc_time()
     
     # 获取当前日期（用于显示去年日期）
     today = datetime.now()
@@ -500,6 +511,7 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
 
 📍 <b>机场:</b> {airport_display}
 🕐 <b>更新时间（北京时间）:</b> {beijing_time}
+🕐 <b>更新时间（UTC）:</b> {utc_time}
 
 📊 <b>当天预测最高温度:</b>
    {max_temp:.1f}°C / {max_temp_f:.1f}°F
