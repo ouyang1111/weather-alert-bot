@@ -358,6 +358,12 @@ def get_beijing_time() -> str:
     return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
+def get_utc_time() -> str:
+    """获取 UTC 时间"""
+    utc_time = datetime.utcnow()
+    return utc_time.strftime('%Y-%m-%d %H:%M:%S')
+
+
 def get_est_time() -> str:
     """获取美东时间（EST/EDT，UTC-5 或 UTC-4）"""
     try:
@@ -750,3 +756,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
