@@ -358,10 +358,25 @@ def get_beijing_time() -> str:
     return beijing_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
-def get_utc_time() -> str:
-    """获取 UTC 时间"""
-    utc_time = datetime.utcnow()
-    return utc_time.strftime('%Y-%m-%d %H:%M:%S')
+def get_est_time() -> str:
+    """获取美东时间（EST/EDT，UTC-5 或 UTC-4）"""
+    try:
+        # 使用 zoneinfo 处理夏令时（Python 3.9+）
+        from zoneinfo import ZoneInfo
+        est_time = datetime.now(ZoneInfo('America/New_York'))
+        return est_time.strftime('%Y-%m-%d %H:%M:%S')
+    except ImportError:
+        # 如果 zoneinfo 不可用，使用固定 UTC-5（EST）
+        est_tz = timezone(timedelta(hours=-5))
+        est_time = datetime.now(est_tz)
+        return est_time.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def get_korea_time() -> str:
+    """获取韩国时间（KST，UTC+9）"""
+    korea_tz = timezone(timedelta(hours=9))
+    korea_time = datetime.now(korea_tz)
+    return korea_time.strftime('%Y-%m-%d %H:%M:%S')
 
 
 def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
@@ -400,10 +415,10 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
     ref_center_f = celsius_to_fahrenheit(ref_center)
     ref_plus_f = celsius_to_fahrenheit(ref_plus)
     
-    # 获取北京时间
+    # 获取三个时区的时间
     beijing_time = get_beijing_time()
-    # 获取 UTC 时间
-    utc_time = get_utc_time()
+    est_time = get_est_time()
+    korea_time = get_korea_time()
     
     # 获取当前日期（用于显示去年日期）
     today = datetime.now()
@@ -413,8 +428,9 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
     message = f"""# 🌡️ 机场天气最高温预测提醒
 
 **📍 机场:** {airport_display}  
-**🕐 更新时间（北京时间）:** {beijing_time}  
-**🕐 更新时间（UTC）:** {utc_time}
+**🕐 更新时间（北京时间 UTC+8）:** {beijing_time}  
+**🕐 更新时间（美东时间 EST/EDT）:** {est_time}  
+**🕐 更新时间（韩国时间 KST UTC+9）:** {korea_time}
 
 ## 📊 当天预测最高温度
 **{max_temp:.1f}°C / {max_temp_f:.1f}°F**
@@ -496,10 +512,10 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
     ref_center_f = celsius_to_fahrenheit(ref_center)
     ref_plus_f = celsius_to_fahrenheit(ref_plus)
     
-    # 获取北京时间
+    # 获取三个时区的时间
     beijing_time = get_beijing_time()
-    # 获取 UTC 时间
-    utc_time = get_utc_time()
+    est_time = get_est_time()
+    korea_time = get_korea_time()
     
     # 获取当前日期（用于显示去年日期）
     today = datetime.now()
@@ -510,8 +526,9 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
 🌡️ <b>机场天气最高温预测提醒</b>
 
 📍 <b>机场:</b> {airport_display}
-🕐 <b>更新时间（北京时间）:</b> {beijing_time}
-🕐 <b>更新时间（UTC）:</b> {utc_time}
+🕐 <b>更新时间（北京时间 UTC+8）:</b> {beijing_time}
+🕐 <b>更新时间（美东时间 EST/EDT）:</b> {est_time}
+🕐 <b>更新时间（韩国时间 KST UTC+9）:</b> {korea_time}
 
 📊 <b>当天预测最高温度:</b>
    {max_temp:.1f}°C / {max_temp_f:.1f}°F
