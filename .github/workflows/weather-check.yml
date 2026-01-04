@@ -1,11 +1,8 @@
 name: 机场天气检查
 
 on:
-  # 定时触发：每 60 分钟运行一次
   schedule:
-    - cron: '0 * * * *'  # 每小时的第 0 分钟运行（即每小时运行一次）
-  
-  # 允许手动触发
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -33,13 +30,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests==2.31.0
     
-       - name: 运行天气检查程序
-     env:
-       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-       WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
-     run: |
-       python weather_alert_bot.py
+    - name: 运行天气检查程序
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+      run: |
+        python weather_alert_bot.py
     
     - name: 保存状态文件（到缓存）
       uses: actions/cache@v4
