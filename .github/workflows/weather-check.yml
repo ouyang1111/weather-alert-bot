@@ -10,9 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10  # 增加超时时间到10分钟
     steps:
-      # ... 其他步骤
-    
-    steps:
     - name: 检出代码
       uses: actions/checkout@v4
       
