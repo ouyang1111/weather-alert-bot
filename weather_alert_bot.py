@@ -8,6 +8,7 @@
 import os
 import json
 import time
+import math
 import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
@@ -81,6 +82,95 @@ def celsius_to_fahrenheit(celsius: float) -> float:
     return (celsius * 9/5) + 32
 
 
+def meters_per_second_to_miles_per_hour(mps: float) -> float:
+    """将米/秒转换为英里/小时"""
+    return mps * 2.237
+
+
+def wind_direction_to_name(angle: float) -> str:
+    """
+    将风向角度转换为方向名称
+    
+    Args:
+        angle: 风向角度（0-360度，0度表示北风）
+    
+    Returns:
+        方向名称（如：北风、东北风、东风等）
+    """
+    # 将角度标准化到0-360范围
+    angle = angle % 360
+    
+    # 定义16个方向
+    directions = [
+        (0, 11.25, '北风'),
+        (11.25, 33.75, '北东北风'),
+        (33.75, 56.25, '东北风'),
+        (56.25, 78.75, '东东北风'),
+        (78.75, 101.25, '东风'),
+        (101.25, 123.75, '东东南风'),
+        (123.75, 146.25, '东南风'),
+        (146.25, 168.75, '南东南风'),
+        (168.75, 191.25, '南风'),
+        (191.25, 213.75, '南西南风'),
+        (213.75, 236.25, '西南风'),
+        (236.25, 258.75, '西西南风'),
+        (258.75, 281.25, '西风'),
+        (281.25, 303.75, '西西北风'),
+        (303.75, 326.25, '西北风'),
+        (326.25, 348.75, '北西北风'),
+        (348.75, 360, '北风'),
+    ]
+    
+    for start, end, name in directions:
+        if start <= angle < end or (start == 348.75 and angle >= 348.75):
+            return name
+    
+    return '北风'
+
+
+def get_weathercode_description(code: int) -> str:
+    """
+    根据 WMO 天气代码返回天气状况描述
+    
+    Args:
+        code: WMO 天气代码
+    
+    Returns:
+        天气状况描述（如：晴天、多云、小雨等）
+    """
+    weather_codes = {
+        0: '晴天',
+        1: '大部分晴天',
+        2: '部分多云',
+        3: '阴天',
+        45: '雾',
+        48: '沉积霜雾',
+        51: '小雨',
+        53: '中雨',
+        55: '大雨',
+        56: '冻雨（小雨）',
+        57: '冻雨（大雨）',
+        61: '小雨',
+        63: '中雨',
+        65: '大雨',
+        66: '冻雨',
+        67: '冻雨',
+        71: '小雪',
+        73: '中雪',
+        75: '大雪',
+        77: '雪粒',
+        80: '小阵雨',
+        81: '中阵雨',
+        82: '大阵雨',
+        85: '小阵雪',
+        86: '大阵雪',
+        95: '雷暴',
+        96: '雷暴伴冰雹',
+        99: '雷暴伴大冰雹',
+    }
+    return weather_codes.get(code, '未知')
+
+
 def get_weather_forecast(latitude: float, longitude: float) -> Optional[Dict]:
     """
     从 Open-Meteo API 获取天气预测数据
@@ -96,7 +186,7 @@ def get_weather_forecast(latitude: float, longitude: float) -> Optional[Dict]:
         params = {
             'latitude': latitude,
             'longitude': longitude,
-            'hourly': 'temperature_2m',
+            'hourly': 'temperature_2m,winddirection_10m,windspeed_10m,windgusts_10m,precipitation,weathercode,cloudcover',
             'timezone': 'auto',
         }
         
@@ -281,6 +371,153 @@ def get_historical_temp_range(latitude: float, longitude: float, target_date: st
         return None
 
 
+def get_today_weather_details(weather_data: Dict) -> Optional[Dict]:
+    """
+    从天气数据中提取当天的详细天气信息
+    
+    Args:
+        weather_data: API 返回的天气数据
+    
+    Returns:
+        包含当天天气详细信息的字典，如果失败返回 None
+        包含：max_temp, wind_direction, wind_speed, max_gust, cloudcover, precipitation_periods, weather_conditions
+    """
+    try:
+        hourly_data = weather_data.get('hourly', {})
+        times = hourly_data.get('time', [])
+        temperatures = hourly_data.get('temperature_2m', [])
+        wind_directions = hourly_data.get('winddirection_10m', [])
+        wind_speeds = hourly_data.get('windspeed_10m', [])
+        wind_gusts = hourly_data.get('windgusts_10m', [])
+        precipitations = hourly_data.get('precipitation', [])
+        weathercodes = hourly_data.get('weathercode', [])
+        cloudcovers = hourly_data.get('cloudcover', [])
+        
+        if not times or not temperatures:
+            return None
+        
+        # 获取当前日期（UTC）
+        now = datetime.utcnow()
+        today_str = now.strftime('%Y-%m-%d')
+        
+        # 筛选出当天的数据
+        today_data = []
+        for i, time_str in enumerate(times):
+            if time_str.startswith(today_str):
+                temp = temperatures[i] if i < len(temperatures) else None
+                wind_dir = wind_directions[i] if i < len(wind_directions) else None
+                wind_speed = wind_speeds[i] if i < len(wind_speeds) else None
+                wind_gust = wind_gusts[i] if i < len(wind_gusts) else None
+                precip = precipitations[i] if i < len(precipitations) else None
+                wcode = weathercodes[i] if i < len(weathercodes) else None
+                cloudcover = cloudcovers[i] if i < len(cloudcovers) else None
+                
+                if temp is not None:
+                    today_data.append({
+                        'time': time_str,
+                        'temp': temp,
+                        'wind_direction': wind_dir,
+                        'wind_speed': wind_speed,
+                        'wind_gust': wind_gust,
+                        'precipitation': precip if precip is not None else 0,
+                        'weathercode': wcode,
+                        'cloudcover': cloudcover
+                    })
+        
+        if not today_data:
+            return None
+        
+        # 计算最高温度
+        max_temp = max(item['temp'] for item in today_data)
+        
+        # 计算平均风向和风速（使用加权平均，权重为风速）
+        valid_wind_data = [(item['wind_direction'], item['wind_speed']) 
+                          for item in today_data 
+                          if item['wind_direction'] is not None and item['wind_speed'] is not None]
+        
+        if valid_wind_data:
+            # 计算平均风向（考虑圆形角度）
+            sin_sum = sum(wind_speed * math.sin(math.radians(wind_dir)) for wind_dir, wind_speed in valid_wind_data)
+            cos_sum = sum(wind_speed * math.cos(math.radians(wind_dir)) for wind_dir, wind_speed in valid_wind_data)
+            avg_wind_direction = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+            
+            # 计算平均风速
+            total_speed = sum(wind_speed for _, wind_speed in valid_wind_data)
+            avg_wind_speed = total_speed / len(valid_wind_data) if valid_wind_data else 0
+        else:
+            avg_wind_direction = None
+            avg_wind_speed = 0
+        
+        # 找出有降水的时段
+        precipitation_periods = []
+        current_period = None
+        
+        for item in today_data:
+            if item['precipitation'] > 0:
+                time_obj = datetime.strptime(item['time'], '%Y-%m-%dT%H:%M')
+                hour = time_obj.hour
+                
+                # 判断是雨还是雪（根据天气代码）
+                is_snow = item['weathercode'] in [71, 73, 75, 77, 85, 86]
+                precip_type = '雪' if is_snow else '雨'
+                
+                if current_period is None:
+                    current_period = {
+                        'start_hour': hour,
+                        'end_hour': hour,
+                        'type': precip_type,
+                        'max_precip': item['precipitation']
+                    }
+                elif current_period['type'] == precip_type and hour == current_period['end_hour'] + 1:
+                    current_period['end_hour'] = hour
+                    current_period['max_precip'] = max(current_period['max_precip'], item['precipitation'])
+                else:
+                    if current_period:
+                        precipitation_periods.append(current_period)
+                    current_period = {
+                        'start_hour': hour,
+                        'end_hour': hour,
+                        'type': precip_type,
+                        'max_precip': item['precipitation']
+                    }
+        
+        if current_period:
+            precipitation_periods.append(current_period)
+        
+        # 获取最常见的天气状况
+        weather_conditions = {}
+        for item in today_data:
+            if item['weathercode'] is not None:
+                desc = get_weathercode_description(item['weathercode'])
+                weather_conditions[desc] = weather_conditions.get(desc, 0) + 1
+        
+        most_common_weather = max(weather_conditions.items(), key=lambda x: x[1])[0] if weather_conditions else '未知'
+        
+        # 计算最大阵风
+        max_gust = 0
+        valid_gusts = [item['wind_gust'] for item in today_data if item.get('wind_gust') is not None]
+        if valid_gusts:
+            max_gust = max(valid_gusts)
+        
+        # 计算平均云量
+        valid_cloudcovers = [item['cloudcover'] for item in today_data if item.get('cloudcover') is not None]
+        avg_cloudcover = sum(valid_cloudcovers) / len(valid_cloudcovers) if valid_cloudcovers else 0
+        
+        return {
+            'max_temp': max_temp,
+            'wind_direction': avg_wind_direction,
+            'wind_speed': avg_wind_speed,
+            'max_gust': max_gust,
+            'cloudcover': avg_cloudcover,
+            'precipitation_periods': precipitation_periods,
+            'weather_condition': most_common_weather,
+            'all_weather_conditions': list(weather_conditions.keys())
+        }
+    except Exception as e:
+        print(f"解析天气详细信息失败: {e}")
+        return None
+
+
 def get_today_max_temp(weather_data: Dict) -> Optional[float]:
     """
     从天气数据中提取当天（0:00-23:59）的最高温度
@@ -399,22 +636,29 @@ def get_windy_temp(airport_code: str, latitude: float, longitude: float) -> Opti
     return None
 
 
-def get_future_days_max_temp(weather_data: Dict, days: int = 3) -> Dict[str, float]:
+def get_future_days_weather(weather_data: Dict, days: int = 3) -> Dict[str, Dict]:
     """
-    从天气数据中提取未来N天的最高温度
+    从天气数据中提取未来N天的完整天气信息
     
     Args:
         weather_data: API 返回的天气数据
         days: 要获取的未来天数（默认3天）
     
     Returns:
-        字典，键为日期字符串（YYYY-MM-DD），值为该天的最高温度（摄氏度）
+        字典，键为日期字符串（YYYY-MM-DD），值为包含该天完整天气信息的字典
+        包含：max_temp, wind_direction, wind_speed, max_gust, precipitation_periods, weather_condition, cloudcover
     """
     result = {}
     try:
         hourly_data = weather_data.get('hourly', {})
         times = hourly_data.get('time', [])
         temperatures = hourly_data.get('temperature_2m', [])
+        wind_directions = hourly_data.get('winddirection_10m', [])
+        wind_speeds = hourly_data.get('windspeed_10m', [])
+        wind_gusts = hourly_data.get('windgusts_10m', [])
+        precipitations = hourly_data.get('precipitation', [])
+        weathercodes = hourly_data.get('weathercode', [])
+        cloudcovers = hourly_data.get('cloudcover', [])
         
         if not times or not temperatures:
             return result
@@ -427,20 +671,114 @@ def get_future_days_max_temp(weather_data: Dict, days: int = 3) -> Dict[str, flo
             future_date = now + timedelta(days=day_offset)
             future_date_str = future_date.strftime('%Y-%m-%d')
             
-            # 筛选出当天的温度数据
-            day_temps = []
+            # 筛选出当天的所有数据
+            day_data = []
             for i, time_str in enumerate(times):
                 if time_str.startswith(future_date_str):
-                    temp = temperatures[i]
+                    temp = temperatures[i] if i < len(temperatures) else None
+                    wind_dir = wind_directions[i] if i < len(wind_directions) else None
+                    wind_speed = wind_speeds[i] if i < len(wind_speeds) else None
+                    wind_gust = wind_gusts[i] if i < len(wind_gusts) else None
+                    precip = precipitations[i] if i < len(precipitations) else None
+                    wcode = weathercodes[i] if i < len(weathercodes) else None
+                    cloudcover = cloudcovers[i] if i < len(cloudcovers) else None
+                    
                     if temp is not None:
-                        day_temps.append(temp)
+                        day_data.append({
+                            'time': time_str,
+                            'temp': temp,
+                            'wind_direction': wind_dir,
+                            'wind_speed': wind_speed,
+                            'wind_gust': wind_gust,
+                            'precipitation': precip if precip is not None else 0,
+                            'weathercode': wcode,
+                            'cloudcover': cloudcover
+                        })
             
-            if day_temps:
-                result[future_date_str] = max(day_temps)
+            if day_data:
+                # 计算最高温度
+                max_temp = max(item['temp'] for item in day_data)
+                
+                # 计算平均风向和风速
+                valid_wind_data = [(item['wind_direction'], item['wind_speed']) 
+                                  for item in day_data 
+                                  if item['wind_direction'] is not None and item['wind_speed'] is not None]
+                
+                if valid_wind_data:
+                    sin_sum = sum(wind_speed * math.sin(math.radians(wind_dir)) for wind_dir, wind_speed in valid_wind_data)
+                    cos_sum = sum(wind_speed * math.cos(math.radians(wind_dir)) for wind_dir, wind_speed in valid_wind_data)
+                    avg_wind_direction = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+                    total_speed = sum(wind_speed for _, wind_speed in valid_wind_data)
+                    avg_wind_speed = total_speed / len(valid_wind_data)
+                else:
+                    avg_wind_direction = None
+                    avg_wind_speed = 0
+                
+                # 计算最大阵风
+                valid_gusts = [item['wind_gust'] for item in day_data if item.get('wind_gust') is not None]
+                max_gust = max(valid_gusts) if valid_gusts else 0
+                
+                # 计算平均云量
+                valid_cloudcovers = [item['cloudcover'] for item in day_data if item.get('cloudcover') is not None]
+                avg_cloudcover = sum(valid_cloudcovers) / len(valid_cloudcovers) if valid_cloudcovers else 0
+                
+                # 找出有降水的时段
+                precipitation_periods = []
+                current_period = None
+                
+                for item in day_data:
+                    if item['precipitation'] > 0:
+                        time_obj = datetime.strptime(item['time'], '%Y-%m-%dT%H:%M')
+                        hour = time_obj.hour
+                        
+                        is_snow = item['weathercode'] in [71, 73, 75, 77, 85, 86]
+                        precip_type = '雪' if is_snow else '雨'
+                        
+                        if current_period is None:
+                            current_period = {
+                                'start_hour': hour,
+                                'end_hour': hour,
+                                'type': precip_type,
+                                'max_precip': item['precipitation']
+                            }
+                        elif current_period['type'] == precip_type and hour == current_period['end_hour'] + 1:
+                            current_period['end_hour'] = hour
+                            current_period['max_precip'] = max(current_period['max_precip'], item['precipitation'])
+                        else:
+                            if current_period:
+                                precipitation_periods.append(current_period)
+                            current_period = {
+                                'start_hour': hour,
+                                'end_hour': hour,
+                                'type': precip_type,
+                                'max_precip': item['precipitation']
+                            }
+                
+                if current_period:
+                    precipitation_periods.append(current_period)
+                
+                # 获取最常见的天气状况
+                weather_conditions = {}
+                for item in day_data:
+                    if item['weathercode'] is not None:
+                        desc = get_weathercode_description(item['weathercode'])
+                        weather_conditions[desc] = weather_conditions.get(desc, 0) + 1
+                
+                most_common_weather = max(weather_conditions.items(), key=lambda x: x[1])[0] if weather_conditions else '未知'
+                
+                result[future_date_str] = {
+                    'max_temp': max_temp,
+                    'wind_direction': avg_wind_direction,
+                    'wind_speed': avg_wind_speed,
+                    'max_gust': max_gust,
+                    'cloudcover': avg_cloudcover,
+                    'precipitation_periods': precipitation_periods,
+                    'weather_condition': most_common_weather
+                }
         
         return result
     except Exception as e:
-        print(f"解析未来温度数据失败: {e}")
+        print(f"解析未来天气数据失败: {e}")
         return result
 
 
@@ -542,7 +880,8 @@ def get_korea_time() -> str:
 
 def format_temperature_message_wechat(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
                                       historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None,
-                                      wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None) -> str:
+                                      wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None,
+                                      weather_details: Optional[Dict] = None) -> str:
     """
     格式化温度提醒消息（企业微信 Markdown 格式）
     
@@ -551,9 +890,10 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
-        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度, ...}}
         wunderground_temp: Wunderground 数据源的当天最高温度
         windy_temp: Windy 数据源的当天最高温度
+        weather_details: 当天的详细天气信息
     
     Returns:
         格式化后的消息（Markdown格式）
@@ -617,6 +957,51 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
     else:
         message += "• **Windy:** 数据暂不可用\n"
     
+    # 添加天气详细信息
+    if weather_details:
+        message += "\n## 🌤️ 天气详细信息\n"
+        
+        # 风向和风速
+        if weather_details.get('wind_direction') is not None:
+            wind_dir_name = wind_direction_to_name(weather_details['wind_direction'])
+            wind_speed_mph = meters_per_second_to_miles_per_hour(weather_details.get('wind_speed', 0))
+            message += f"• **风向:** {wind_dir_name}\n"
+            message += f"• **风速:** {wind_speed_mph:.1f} 英里/小时\n"
+        else:
+            message += "• **风向:** 数据暂不可用\n"
+            message += "• **风速:** 数据暂不可用\n"
+        
+        # 最大阵风
+        max_gust = weather_details.get('max_gust', 0)
+        if max_gust > 0:
+            max_gust_mph = meters_per_second_to_miles_per_hour(max_gust)
+            message += f"• **最大阵风:** {max_gust_mph:.1f} 英里/小时\n"
+        else:
+            message += "• **最大阵风:** 数据暂不可用\n"
+        
+        # 云量
+        cloudcover = weather_details.get('cloudcover', 0)
+        message += f"• **云量:** {cloudcover:.0f}%\n"
+        
+        # 天气状况
+        weather_condition = weather_details.get('weather_condition', '未知')
+        message += f"• **天气状况:** {weather_condition}\n"
+        
+        # 降水信息
+        precip_periods = weather_details.get('precipitation_periods', [])
+        if precip_periods:
+            message += "• **降水时段:**\n"
+            for period in precip_periods:
+                start_hour = period['start_hour']
+                end_hour = period['end_hour']
+                precip_type = period['type']
+                if start_hour == end_hour:
+                    message += f"  - {start_hour:02d}:00 有{precip_type}\n"
+                else:
+                    message += f"  - {start_hour:02d}:00 至 {end_hour:02d}:00 有{precip_type}\n"
+        else:
+            message += "• **降水:** 无降水\n"
+    
     message += f"""
 ## 📈 三个参考值
 • {ref_minus:.1f}°C / {ref_minus_f:.1f}°F (最高温 -1°C)  
@@ -663,6 +1048,12 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
                 continue
             future_max_temp = day_data.get('max_temp', 0)
             last_year_temp_future = day_data.get('last_year_temp', None)
+            wind_direction = day_data.get('wind_direction', None)
+            wind_speed = day_data.get('wind_speed', 0)
+            max_gust = day_data.get('max_gust', 0)
+            cloudcover = day_data.get('cloudcover', 0)
+            weather_condition = day_data.get('weather_condition', '未知')
+            precip_periods = day_data.get('precipitation_periods', [])
             
             # 格式化日期显示
             try:
@@ -675,11 +1066,51 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
             
             future_max_temp_f = celsius_to_fahrenheit(future_max_temp)
             
+            message += f"\n\n### {date_display}"
+            
+            # 温度
             if last_year_temp_future is not None:
                 last_year_temp_future_f = celsius_to_fahrenheit(last_year_temp_future)
-                message += f"\n• **{date_display}:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
+                message += f"\n• **最高温度:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
             else:
-                message += f"\n• **{date_display}:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
+                message += f"\n• **最高温度:** {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
+            
+            # 风向和风速
+            if wind_direction is not None:
+                wind_dir_name = wind_direction_to_name(wind_direction)
+                wind_speed_mph = meters_per_second_to_miles_per_hour(wind_speed)
+                message += f"\n• **风向:** {wind_dir_name}"
+                message += f"\n• **风速:** {wind_speed_mph:.1f} 英里/小时"
+            else:
+                message += "\n• **风向:** 数据暂不可用"
+                message += "\n• **风速:** 数据暂不可用"
+            
+            # 最大阵风
+            if max_gust > 0:
+                max_gust_mph = meters_per_second_to_miles_per_hour(max_gust)
+                message += f"\n• **最大阵风:** {max_gust_mph:.1f} 英里/小时"
+            else:
+                message += "\n• **最大阵风:** 数据暂不可用"
+            
+            # 云量
+            message += f"\n• **云量:** {cloudcover:.0f}%"
+            
+            # 天气状况
+            message += f"\n• **天气状况:** {weather_condition}"
+            
+            # 降水信息
+            if precip_periods:
+                message += "\n• **降水时段:**"
+                for period in precip_periods:
+                    start_hour = period['start_hour']
+                    end_hour = period['end_hour']
+                    precip_type = period['type']
+                    if start_hour == end_hour:
+                        message += f"\n  - {start_hour:02d}:00 有{precip_type}"
+                    else:
+                        message += f"\n  - {start_hour:02d}:00 至 {end_hour:02d}:00 有{precip_type}"
+            else:
+                message += "\n• **降水:** 无降水"
     
     # 获取 Wunderground 和 Windy 网址（从配置中直接读取）
     wunderground_url = airport_info.get('wunderground_url', 'https://www.wunderground.com')
@@ -698,7 +1129,8 @@ def format_temperature_message_wechat(airport: str, max_temp: float, last_year_t
 
 def format_temperature_message(airport: str, max_temp: float, last_year_temp: Optional[float] = None, 
                                 historical_range: Optional[Dict] = None, future_days: Optional[Dict] = None,
-                                wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None) -> str:
+                                wunderground_temp: Optional[float] = None, windy_temp: Optional[float] = None,
+                                weather_details: Optional[Dict] = None) -> str:
     """
     格式化温度提醒消息
     
@@ -707,9 +1139,10 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
         max_temp: 最高温度（摄氏度）
         last_year_temp: 去年同一天的最高温度
         historical_range: 历史温度范围数据
-        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度}}
+        future_days: 未来3天的天气预报数据，格式为 {日期: {'max_temp': 温度, 'last_year_temp': 去年温度, ...}}
         wunderground_temp: Wunderground 数据源的当天最高温度
         windy_temp: Windy 数据源的当天最高温度
+        weather_details: 当天的详细天气信息
     
     Returns:
         格式化后的消息
@@ -773,6 +1206,51 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
     else:
         message += "\n   • <b>Windy:</b> 数据暂不可用"
     
+    # 添加天气详细信息
+    if weather_details:
+        message += "\n\n🌤️ <b>天气详细信息:</b>"
+        
+        # 风向和风速
+        if weather_details.get('wind_direction') is not None:
+            wind_dir_name = wind_direction_to_name(weather_details['wind_direction'])
+            wind_speed_mph = meters_per_second_to_miles_per_hour(weather_details.get('wind_speed', 0))
+            message += f"\n   • <b>风向:</b> {wind_dir_name}"
+            message += f"\n   • <b>风速:</b> {wind_speed_mph:.1f} 英里/小时"
+        else:
+            message += "\n   • <b>风向:</b> 数据暂不可用"
+            message += "\n   • <b>风速:</b> 数据暂不可用"
+        
+        # 最大阵风
+        max_gust = weather_details.get('max_gust', 0)
+        if max_gust > 0:
+            max_gust_mph = meters_per_second_to_miles_per_hour(max_gust)
+            message += f"\n   • <b>最大阵风:</b> {max_gust_mph:.1f} 英里/小时"
+        else:
+            message += "\n   • <b>最大阵风:</b> 数据暂不可用"
+        
+        # 云量
+        cloudcover = weather_details.get('cloudcover', 0)
+        message += f"\n   • <b>云量:</b> {cloudcover:.0f}%"
+        
+        # 天气状况
+        weather_condition = weather_details.get('weather_condition', '未知')
+        message += f"\n   • <b>天气状况:</b> {weather_condition}"
+        
+        # 降水信息
+        precip_periods = weather_details.get('precipitation_periods', [])
+        if precip_periods:
+            message += "\n   • <b>降水时段:</b>"
+            for period in precip_periods:
+                start_hour = period['start_hour']
+                end_hour = period['end_hour']
+                precip_type = period['type']
+                if start_hour == end_hour:
+                    message += f"\n     - {start_hour:02d}:00 有{precip_type}"
+                else:
+                    message += f"\n     - {start_hour:02d}:00 至 {end_hour:02d}:00 有{precip_type}"
+        else:
+            message += "\n   • <b>降水:</b> 无降水"
+    
     message += f"""
 
 📈 <b>三个参考值:</b>
@@ -820,6 +1298,12 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
                 continue
             future_max_temp = day_data.get('max_temp', 0)
             last_year_temp_future = day_data.get('last_year_temp', None)
+            wind_direction = day_data.get('wind_direction', None)
+            wind_speed = day_data.get('wind_speed', 0)
+            max_gust = day_data.get('max_gust', 0)
+            cloudcover = day_data.get('cloudcover', 0)
+            weather_condition = day_data.get('weather_condition', '未知')
+            precip_periods = day_data.get('precipitation_periods', [])
             
             # 格式化日期显示
             try:
@@ -832,11 +1316,51 @@ def format_temperature_message(airport: str, max_temp: float, last_year_temp: Op
             
             future_max_temp_f = celsius_to_fahrenheit(future_max_temp)
             
+            message += f"\n\n   <b>{date_display}:</b>"
+            
+            # 温度
             if last_year_temp_future is not None:
                 last_year_temp_future_f = celsius_to_fahrenheit(last_year_temp_future)
-                message += f"\n   • {date_display}: {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
+                message += f"\n     • <b>最高温度:</b> {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F (去年{last_year_date_display}: {last_year_temp_future:.1f}°C / {last_year_temp_future_f:.1f}°F)"
             else:
-                message += f"\n   • {date_display}: {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
+                message += f"\n     • <b>最高温度:</b> {future_max_temp:.1f}°C / {future_max_temp_f:.1f}°F"
+            
+            # 风向和风速
+            if wind_direction is not None:
+                wind_dir_name = wind_direction_to_name(wind_direction)
+                wind_speed_mph = meters_per_second_to_miles_per_hour(wind_speed)
+                message += f"\n     • <b>风向:</b> {wind_dir_name}"
+                message += f"\n     • <b>风速:</b> {wind_speed_mph:.1f} 英里/小时"
+            else:
+                message += "\n     • <b>风向:</b> 数据暂不可用"
+                message += "\n     • <b>风速:</b> 数据暂不可用"
+            
+            # 最大阵风
+            if max_gust > 0:
+                max_gust_mph = meters_per_second_to_miles_per_hour(max_gust)
+                message += f"\n     • <b>最大阵风:</b> {max_gust_mph:.1f} 英里/小时"
+            else:
+                message += "\n     • <b>最大阵风:</b> 数据暂不可用"
+            
+            # 云量
+            message += f"\n     • <b>云量:</b> {cloudcover:.0f}%"
+            
+            # 天气状况
+            message += f"\n     • <b>天气状况:</b> {weather_condition}"
+            
+            # 降水信息
+            if precip_periods:
+                message += "\n     • <b>降水时段:</b>"
+                for period in precip_periods:
+                    start_hour = period['start_hour']
+                    end_hour = period['end_hour']
+                    precip_type = period['type']
+                    if start_hour == end_hour:
+                        message += f"\n       - {start_hour:02d}:00 有{precip_type}"
+                    else:
+                        message += f"\n       - {start_hour:02d}:00 至 {end_hour:02d}:00 有{precip_type}"
+            else:
+                message += "\n     • <b>降水:</b> 无降水"
     
     # 获取 Wunderground 和 Windy 网址（从配置中直接读取）
     wunderground_url = airport_info.get('wunderground_url', 'https://www.wunderground.com')
@@ -918,11 +1442,32 @@ def check_and_send_alerts(force_send: bool = False):
             print(f"  ❌ 获取 {airport} 天气数据失败（已重试{max_retries}次）")
             continue
         
-        # 获取当天最高温度
+        # 获取当天最高温度和天气详细信息
         max_temp = get_today_max_temp(weather_data)
         if max_temp is None:
             print(f"  ❌ 解析 {airport} 温度数据失败")
             continue
+        
+        # 获取天气详细信息
+        weather_details = get_today_weather_details(weather_data)
+        if weather_details:
+            print(f"  ✅ {airport} 天气详细信息已获取")
+            if weather_details.get('wind_direction') is not None:
+                wind_dir_name = wind_direction_to_name(weather_details['wind_direction'])
+                wind_speed_mph = meters_per_second_to_miles_per_hour(weather_details.get('wind_speed', 0))
+                print(f"  ✅ 风向: {wind_dir_name}, 风速: {wind_speed_mph:.1f} 英里/小时")
+            if weather_details.get('max_gust', 0) > 0:
+                max_gust_mph = meters_per_second_to_miles_per_hour(weather_details.get('max_gust', 0))
+                print(f"  ✅ 最大阵风: {max_gust_mph:.1f} 英里/小时")
+            print(f"  ✅ 云量: {weather_details.get('cloudcover', 0):.0f}%")
+            print(f"  ✅ 天气状况: {weather_details.get('weather_condition', '未知')}")
+            precip_periods = weather_details.get('precipitation_periods', [])
+            if precip_periods:
+                print(f"  ✅ 有 {len(precip_periods)} 个降水时段")
+            else:
+                print(f"  ✅ 无降水")
+        else:
+            print(f"  ⚠️ 获取 {airport} 天气详细信息失败")
         
         current_max_temps[airport] = max_temp
         print(f"  ✅ {airport} 当天最高温度: {max_temp:.1f}°C")
@@ -974,20 +1519,19 @@ def check_and_send_alerts(force_send: bool = False):
         future_days = {}
         try:
             print(f"  🔮 正在获取 {airport} 未来3天天气预报...")
-            future_days_raw = get_future_days_max_temp(weather_data, days=3)
+            future_days_raw = get_future_days_weather(weather_data, days=3)
             
             # 为每一天获取去年同一天的温度
-            for date_str, future_max_temp in future_days_raw.items():
+            for date_str, day_weather in future_days_raw.items():
                 last_year_temp_future = None
                 try:
                     last_year_temp_future = get_last_year_same_date_temp(coords['lat'], coords['lon'], date_str)
                 except Exception as e:
                     print(f"    ⚠️ 获取 {date_str} 去年温度失败: {e}")
                 
-                future_days[date_str] = {
-                    'max_temp': future_max_temp,
-                    'last_year_temp': last_year_temp_future
-                }
+                # 合并天气信息和去年温度
+                day_weather['last_year_temp'] = last_year_temp_future
+                future_days[date_str] = day_weather
             
             if future_days:
                 print(f"  ✅ 已获取未来3天天气预报")
@@ -1021,13 +1565,13 @@ def check_and_send_alerts(force_send: bool = False):
         # 发送通知
         if should_send:
             # 发送到 Telegram
-            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp)
+            telegram_message = format_temperature_message(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp, weather_details)
             telegram_success = send_telegram_message(telegram_message)
             
             # 发送到企业微信（如果配置了）
             wechat_success = False
             if WECHAT_WEBHOOK_URL and WECHAT_WEBHOOK_URL != '':
-                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp)
+                wechat_message = format_temperature_message_wechat(airport, max_temp, last_year_temp, historical_range, future_days, wunderground_temp, windy_temp, weather_details)
                 wechat_success = send_wechat_message(wechat_message)
             
             # 打印发送结果
