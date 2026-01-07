@@ -58,15 +58,6 @@ AIRPORTS = {
         'wunderground_url': 'https://www.wunderground.com/history/daily/gb/london/EGLC',
         'windy_url': 'https://www.windy.com/51.505/0.053?51.503,0.065,15,p:cities'
     },
-    '首尔 ICN': {
-        'lat': 37.4602, 
-        'lon': 126.4407, 
-        'code': 'ICN', 
-        'name_cn': '首尔', 
-        'wunderground_code': 'RKSI',
-        'wunderground_url': 'https://www.wunderground.com/history/daily/kr/incheon/RKSI',
-        'windy_url': 'https://www.windy.com/37.464/126.440?37.214,126.440,9,p:cities'
-    },
 }
 
 # ==================== API 配置 ====================
@@ -1428,7 +1419,8 @@ def load_state() -> Dict:
     # 返回默认状态
     return {
         'last_max_temps': {airport: None for airport in AIRPORTS.keys()},
-        'last_check_date': None
+        'last_check_date': None,
+        'last_send_times': {airport: None for airport in AIRPORTS.keys()}  # 记录上次发送时间
     }
 
 
@@ -1452,6 +1444,7 @@ def check_and_send_alerts(force_send: bool = False):
     state = load_state()
     last_max_temps = state.get('last_max_temps', {airport: None for airport in AIRPORTS.keys()})
     last_check_date = state.get('last_check_date')
+    last_send_times = state.get('last_send_times', {airport: None for airport in AIRPORTS.keys()})
     
     current_date = datetime.now().strftime('%Y-%m-%d')
     is_new_day = (last_check_date != current_date)
@@ -1576,6 +1569,21 @@ def check_and_send_alerts(force_send: bool = False):
         # 判断是否需要发送通知
         should_send = False
         
+        # 防重复发送：检查上次发送时间，如果25分钟内发送过，则跳过
+        # 这样可以确保每30分钟发送一次，但避免短时间内重复发送
+        current_time = datetime.now()
+        last_send_time_str = last_send_times.get(airport)
+        if last_send_time_str and not force_send:  # 强制发送模式（定时任务）不检查
+            try:
+                last_send_time = datetime.strptime(last_send_time_str, '%Y-%m-%d %H:%M:%S')
+                time_diff = (current_time - last_send_time).total_seconds() / 60  # 转换为分钟
+                if time_diff < 25:  # 25分钟内不重复发送（确保30分钟间隔）
+                    print(f"  ⏸️ 距离上次发送仅 {time_diff:.1f} 分钟，跳过发送（防重复）")
+                    current_max_temps[airport] = max_temp
+                    continue
+            except Exception as e:
+                print(f"  ⚠️ 解析上次发送时间失败: {e}")
+        
         # 强制发送模式（手动触发时）
         if force_send:
             should_send = True
@@ -1618,13 +1626,17 @@ def check_and_send_alerts(force_send: bool = False):
             
             if results:
                 print(f"  ✅ 已发送 {airport} 提醒消息到: {', '.join(results)}")
+                # 立即更新该机场的状态和发送时间，防止重复发送
+                current_max_temps[airport] = max_temp
+                last_send_times[airport] = current_time.strftime('%Y-%m-%d %H:%M:%S')
             else:
                 print(f"  ❌ 发送 {airport} 提醒消息失败")
     
-    # 保存当前状态
+    # 保存当前状态（所有机场检查完成后）
     new_state = {
         'last_max_temps': current_max_temps,
-        'last_check_date': current_date
+        'last_check_date': current_date,
+        'last_send_times': last_send_times
     }
     save_state(new_state)
     
@@ -1648,12 +1660,16 @@ def main():
         print("   请在 GitHub Actions Secrets 中设置 TELEGRAM_CHAT_ID")
         return
     
-    # 检查是否是手动触发（通过环境变量判断）
+    # 检查触发方式（通过环境变量判断）
     # GitHub Actions 手动触发时会设置 GITHUB_EVENT_NAME=workflow_dispatch
-    is_manual_trigger = os.getenv('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+    # 定时任务触发时会设置 GITHUB_EVENT_NAME=schedule
+    github_event = os.getenv('GITHUB_EVENT_NAME', '')
+    is_manual_trigger = github_event == 'workflow_dispatch'
+    is_schedule_trigger = github_event == 'schedule'
     
-    # 执行检查（手动触发时强制发送）
-    check_and_send_alerts(force_send=is_manual_trigger)
+    # 执行检查
+    # 手动触发或定时任务触发时都强制发送（每30分钟发送一次）
+    check_and_send_alerts(force_send=(is_manual_trigger or is_schedule_trigger))
 
 
 if __name__ == '__main__':
